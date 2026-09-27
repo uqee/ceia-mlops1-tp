@@ -1,148 +1,188 @@
-# Ejemplo de ambiente productivo
-### MLOps1 - CEIA - FIUBA
-Estructura de servicios para la implementación del proyecto final de MLOps1 - CEIA - FIUBA
+# Precio de Airbnb en Río de Janeiro, en producción
+### MLOps1 (AMq2) - CEIA - FIUBA
 
-Supongamos que trabajamos para **ML Models and something more Inc.**, la cual ofrece un servicio que proporciona modelos mediante una REST API. Internamente, tanto para realizar tareas de DataOps como de MLOps, la empresa cuenta con varios servicios que ayudan a ejecutar las acciones necesarias. También dispone de un Data Lake en S3, para este caso, simularemos un S3 utilizando MinIO.
+Llevamos a un entorno productivo el modelo del TP final de Aprendizaje de Máquina I:
+un **XGBoost que predice el precio por noche de un aviso de Airbnb en Río de Janeiro**,
+con un **MAE de ~250 BRL** en test (el baseline heurístico daba 385).
 
-Para simular esta empresa, utilizaremos Docker y, a través de Docker Compose, desplegaremos varios contenedores que representan distintos servicios en un entorno productivo.
+El entorno simula la infraestructura de *ML Models and something more Inc.*: Airflow
+orquesta, MLflow registra experimentos y modelos, MinIO hace de data lake S3,
+PostgreSQL guarda metadatos y FastAPI sirve el modelo. Todo corre con Docker Compose,
+sobre la base de [amq2-service-ml](https://github.com/facundolucianna/amq2-service-ml).
 
-Los servicios que contamos son:
-- [Apache Airflow](https://airflow.apache.org/)
-- [MLflow](https://mlflow.org/)
-- API Rest para servir modelos ([FastAPI](https://fastapi.tiangolo.com/))
-- [MinIO](https://min.io/)
-- Base de datos relacional [PostgreSQL](https://www.postgresql.org/)
-- Base de dato key-value [ValKey](https://valkey.io/) 
+**Integrantes:** _completar_
 
-![Diagrama de servicios](final_assign.png)
+## El modelo
 
-Por defecto, cuando se inician los multi-contenedores, se crean los siguientes buckets:
+- **Datos:** [Inside Airbnb](https://insideairbnb.com/get-the-data/), Río de Janeiro,
+  scrape del 24/06/2026. 48.713 avisos y 90 columnas, que tras la limpieza quedan en 44.238.
+- **Target:** precio por noche en BRL. El modelo entrena sobre `log(precio)` y devuelve BRL.
+- **Features:** 35 (19 numéricas, 13 binarias, 3 categóricas). Lat/lon son las más importantes.
+- **Modelo:** XGBoost con los hiperparámetros que encontró Optuna en el TP de AMq1.
 
-- `s3://data`
-- `s3://mlflow` (usada por MLflow para guardar los artefactos).
+| Métrica (test) | Valor |
+| --- | --- |
+| MAE | 249,6 BRL |
+| RMSE | 613,2 BRL |
+| MAPE | 31,4 % |
+| R² | 0,545 |
 
-y las siguientes bases de datos:
+El análisis completo y la comparación contra los otros 15 modelos están en el
+[notebook del TP de AMq1](https://github.com/lautarovera-edu/fiuba-ceia-amq/tree/tp-full-run/trabajo_final).
 
-- `mlflow_db` (usada por MLflow).
-- `airflow` (usada por Airflow).
+**Limitación conocida:** el error tiene forma de U. Es del 46 % en el quintil más
+barato, del 23 % en el medio y del 37 % en el más caro.
 
-## Tarea a realizar
+## Arquitectura
 
-La tarea es implementar el modelo que desarrollaron en Aprendizaje de Máquina en este ambiente productivo. Para ello, pueden usar y crear los buckets y bases de datos que necesiten. Lo mínimo que deben realizar es:
-
-- Un DAG en Apache Airflow. Puede ser cualquier tarea que se desee realizar, como entrenar el modelo, un proceso ETL, etc.
-- Un experimento en MLflow de búsqueda de hiperparámetros.
-- Servir el modelo implementado en AMq1 en el servicio de RESTAPI.
-- Documentar (comentarios y docstring en scripts, notebooks, y asegurar que la documentación de FastAPI esté de acuerdo al modelo).
-
-Desde **ML Models and something more Inc.** autorizan a extender los requisitos mínimos. También pueden utilizar nuevos servicios (por ejemplo, una base de datos no relacional, otro orquestador como MetaFlow, un servicio de API mediante NodeJs, etc.).
-
-### Ejemplo 
-
-El [branch `example_implementation`](https://github.com/facundolucianna/amq2-service-ml/tree/example_implementation) contiene un ejemplo de aplicación para guiarse. Se trata de una implementación de un modelo de clasificación utilizando los datos de [Heart Disease](https://archive.ics.uci.edu/dataset/45/heart+disease).
-
-Además se cuenta con una implementación ejemplo de predicción en bache con una parte que funciona gran parte de local en [branch `batch-example`](https://github.com/facundolucianna/amq2-service-ml/tree/example_implementation)
-
-## Instalación
-
-1. Para poder levantar todos los servicios, primero instala [Docker](https://docs.docker.com/engine/install/) en tu computadora (o en el servidor que desees usar).
-2. Clona este repositorio.
-3. Si estás en Linux o MacOS, en el archivo `.env`, reemplaza `AIRFLOW_UID` por el de tu usuario o alguno que consideres oportuno (para encontrar el UID, usa el comando `id -u <username>`). De lo contrario, Airflow dejará sus carpetas internas como root y no podrás subir DAGs (en `airflow/dags`) o plugins, etc.
-4. En la carpeta raíz de este repositorio, ejecuta:
-
-```bash
-docker compose --profile all up
+```mermaid
+flowchart LR
+  CSV[Inside Airbnb<br/>listings.csv.gz] --> ETL
+  subgraph Airflow
+    ETL[DAG etl_listings] -. Asset .-> TRAIN[DAG train_model]
+  end
+  ETL --> S3[(MinIO<br/>s3://data)]
+  S3 --> TRAIN
+  TRAIN --> ML[(MLflow<br/>runs + registry)]
+  ML -. champion .-> API[FastAPI<br/>/predict]
 ```
 
-5. Una vez que todos los servicios estén funcionando (verifica con el comando `docker ps -a` que todos los servicios estén healthy o revisa en Docker Desktop), podrás acceder a los diferentes servicios mediante:
-   - Apache Airflow: http://localhost:8080
-   - MLflow: http://localhost:5001
-   - MinIO: http://localhost:9001 (ventana de administración de Buckets)
-   - API: http://localhost:8800/
-   - Documentación de la API: http://localhost:8800/docs
+| Servicio | Rol en el TP | URL local |
+| --- | --- | --- |
+| Airflow | Corre los DAGs de ETL y entrenamiento | http://localhost:8080 (airflow / airflow) |
+| MinIO | Data lake: CSV crudo, parquet intermedios, train/test, artefactos de MLflow | http://localhost:9001 (minio / minio123) |
+| MLflow | Runs con parámetros y métricas, Model Registry con alias `champion` | http://localhost:5001 |
+| PostgreSQL | Metadatos de Airflow y MLflow | `localhost:5432` |
+| FastAPI | Sirve el modelo `champion` (entrega final) | http://localhost:8800/docs |
 
-Si estás usando un servidor externo a tu computadora de trabajo, reemplaza `localhost` por su IP (puede ser una privada si tu servidor está en tu LAN o una IP pública si no; revisa firewalls u otras reglas que eviten las conexiones).
+### DAG `etl_listings` (semanal)
 
-Todos los puertos u otras configuraciones se pueden modificar en el archivo `.env`. Se invita a jugar y romper para aprender; siempre puedes volver a clonar este repositorio.
-
-## Apagar los servicios
-
-Estos servicios ocupan cierta cantidad de memoria RAM y procesamiento, por lo que cuando no se están utilizando, se recomienda detenerlos. Para hacerlo, ejecuta el siguiente comando:
-
-```bash
-docker compose --profile all down
+```mermaid
+flowchart LR
+  A[obtener_raw] --> B[limpiar] --> C[construir_features] --> D[separar_train_test]
 ```
 
-Si deseas no solo detenerlos, sino también eliminar toda la infraestructura (liberando espacio en disco), utiliza el siguiente comando:
+| Task | Qué hace | Escribe |
+| --- | --- | --- |
+| `obtener_raw` | Baja el snapshot de Inside Airbnb, sólo si todavía no está | `s3://data/raw/listings.csv.gz` |
+| `limpiar` | Saca columnas con fuga, parsea el precio y corta precios > 10.000 BRL | `s3://data/interim/listings_limpio.parquet` |
+| `construir_features` | Banderas de faltantes, amenities, antigüedad del host | `s3://data/interim/listings_features.parquet` |
+| `separar_train_test` | Split 70/30, semilla 42 | `s3://data/final/train.parquet`, `test.parquet` |
 
-```bash
-docker compose down --rmi all --volumes
+Cada task lee y escribe en MinIO, así que ninguna depende de lo que quedó en memoria
+de otra y cualquiera se puede reintentar sola.
+
+### DAG `train_model` (se dispara solo cuando cambia `train.parquet`)
+
+```mermaid
+flowchart LR
+  A[entrenar] --> B[evaluar] --> C{¿MAE mejor que<br/>el champion?}
+  C -->|sí| D[alias champion]
+  C -->|no| E[alias challenger]
 ```
 
-Nota: Si haces esto, perderás todo en los buckets y bases de datos.
+1. `entrenar`: ajusta el pipeline y lo registra como nueva versión de `airbnb_rio_price`.
+2. `evaluar`: calcula MAE, RMSE, MAPE y R² en test (en BRL) y los guarda en el run.
+3. `promover`: si la versión nueva tiene mejor MAE que el `champion`, pasa a ser el
+   `champion`. Si no, queda como `challenger` y producción no cambia.
 
-## Aspectos específicos de Airflow
+`train_model` no tiene horario: está atado al Asset `s3://data/final/train.parquet`.
+Cuando el ETL escribe datos nuevos, Airflow lo dispara solo.
 
-### Variables de entorno
-Airflow ofrece una amplia gama de opciones de configuración. En el archivo `docker-compose.yaml`, dentro de `x-airflow-common`, se encuentran variables de entorno que pueden modificarse para ajustar la configuración de Airflow. Pueden añadirse [otras variables](https://airflow.apache.org/docs/apache-airflow/stable/configurations-ref.html).
+## Estructura del repo
 
-### Uso de ejecutores externos
-Actualmente, para este caso, Airflow utiliza un ejecutor [celery](https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/executor/celery.html), lo que significa que las tareas se ejecutan en otro contenedor. 
-
-### Uso de la CLI de Airflow
-
-Si necesitan depurar Apache Airflow, pueden utilizar la CLI de Apache Airflow de la siguiente manera:
-
-```bash
-docker compose --profile all --profile debug up
+```
+├── airflow/dags/
+│   ├── etl_listings.py       # DAG de ETL
+│   └── train_model.py        # DAG de entrenamiento + champion/challenger
+├── src/airbnb_rio/           # paquete compartido por los DAGs (y la API en la final)
+│   ├── config.py             # columnas, hiperparámetros, rutas S3, nombres de MLflow
+│   ├── features.py           # limpieza y features (secciones 2-3 del TP de AMq1)
+│   ├── modelo.py             # preprocesador + XGBoost + métricas
+│   └── s3.py                 # lectura/escritura en MinIO
+├── dockerfiles/              # imágenes de cada servicio
+└── docker-compose.yaml
 ```
 
-Una vez que el contenedor esté en funcionamiento, pueden utilizar la CLI de Airflow de la siguiente manera, 
-por ejemplo, para ver la configuración:
+`src/` se monta en los contenedores de Airflow (`/opt/airflow/src`, en el
+`PYTHONPATH`). La limpieza, las features y el pipeline existen en un solo lugar.
+
+## Cómo levantarlo
+
+Requisitos: Docker con **al menos 6 GB de RAM asignados** (Docker Desktop → Settings →
+Resources). Con menos, los contenedores de Airflow se caen.
 
 ```bash
-docker-compose run airflow-cli config list      
+docker compose --profile all up -d --build
 ```
 
-Para obtener más información sobre el comando, pueden consultar [aqui](https://airflow.apache.org/docs/apache-airflow/stable/cli-and-env-variables-ref.html).
+(Con Colima o instalaciones viejas el comando es `docker-compose`, con guion.)
 
-### Variables y Conexiones
-
-Si desean agregar variables para accederlas en los DAGs, pueden hacerlo en `secrets/variables.yaml`. Para obtener más [información](https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/variables.html), 
-consulten la documentación.
-
-Si desean agregar conexiones en Airflow, pueden hacerlo en `secrets/connections.yaml`. También es posible agregarlas mediante la interfaz de usuario (UI), pero estas no persistirán si se borra todo. Por otro lado, cualquier conexión guardada en `secrets/connections.yaml` no aparecerá en la UI, aunque eso no significa que no exista. Consulten la documentación para obtener más 
-[información](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/connections.html).
-
-## Conexión con los buckets
-
-Dado que no estamos utilizando Amazon S3, sino una implementación local de los mismos mediante MinIO, es necesario modificar las variables de entorno para conectar con el servicio de MinIO. Las variables de entorno son las siguientes:
+Si el puerto 5432 ya está ocupado en tu máquina (otro Postgres), elegí otro:
 
 ```bash
-AWS_ACCESS_KEY_ID=minio   
-AWS_SECRET_ACCESS_KEY=minio123 
-AWS_ENDPOINT_URL_S3=http://localhost:90000
+PG_PORT=5433 docker compose --profile all up -d --build
 ```
 
-MLflow también tiene una variable de entorno que afecta su conexión a los buckets:
+Esperar a que `docker ps` muestre todo `healthy` (unos minutos la primera vez).
+
+## Cómo correrlo
+
+1. Entrar a Airflow (http://localhost:8080, `airflow` / `airflow`).
+2. Activar (*unpause*) `etl_listings` y `train_model`. Arrancan pausados.
+3. Disparar `etl_listings` con ▶. Al terminar, `train_model` arranca solo.
+4. Ver el resultado en MLflow (http://localhost:5001): experimento `airbnb_rio_price`,
+   y en *Models* la versión con alias `champion`.
+
+Si Inside Airbnb no está accesible, se puede subir el CSV a mano antes del paso 3
+(`obtener_raw` lo detecta y no descarga):
 
 ```bash
-MLFLOW_S3_ENDPOINT_URL=http://localhost:9000
+docker run --rm --network ceia-mlops1-tp_backend -v "$PWD":/w --entrypoint sh \
+  coollabsio/minio:RELEASE.2025-04-22T22-12-26Z -c \
+  "mc alias set s3 http://s3:9000 minio minio123 && mc cp /w/listings.csv.gz s3/data/raw/"
 ```
-Asegúrate de establecer estas variables de entorno antes de ejecutar tu notebook o scripts en tu máquina o en cualquier otro lugar. Si estás utilizando un servidor externo a tu computadora de trabajo, reemplaza localhost por su dirección IP.
 
-Al hacer esto, podrás utilizar `boto3`, `awswrangler`, etc., en Python con estos buckets, o `awscli` en la consola.
+Apagar: `docker compose --profile all down`. Borrar todo, datos incluidos:
+`docker compose down --rmi all --volumes`.
 
-Si tienes acceso a AWS S3, ten mucho cuidado de no reemplazar tus credenciales de AWS. Si usas las variables de entorno, no tendrás problemas.
+## Decisiones de diseño
 
-## Valkey
+1. **El preprocesamiento vive dentro del modelo.** Imputación, escalado, one-hot y la
+   agrupación de categorías raras se serializan junto con XGBoost. La API recibe
+   features y predice. Si el preprocesamiento viviera en dos lugares, tarde o temprano
+   se desincronizarían y el modelo predeciría basura sin tirar error.
+2. **El logaritmo del target no sale del modelo.** `TransformedTargetRegressor` entrena
+   sobre `log(precio)` y aplica `exp()` al predecir, así el artefacto devuelve BRL.
+   Olvidarse el `exp()` en la API es el bug más probable de este TP.
+3. **Categorías raras con `min_frequency`.** En el notebook, los barrios con menos de
+   200 avisos se pasaban a mano a "Otros". Ahora lo hace el `OneHotEncoder`
+   (`min_frequency=200`, `handle_unknown="infrequent_if_exist"`): queda ajustado sobre
+   train y un barrio nunca visto cae en "Otros" en vez de romper. Por esa diferencia el
+   MAE pasó de 250,5 a 249,6.
+4. **Snapshot fijo de datos.** Inside Airbnb re-scrapea seguido: entre marzo y junio los
+   faltantes de `bedrooms` pasaron de 123 a 6.446. La URL apunta a una fecha fija para
+   que los números sean reproducibles.
+5. **Sólo XGBoost.** Los otros 15 modelos del TP quedan en el notebook como evidencia.
+   SVR solo tardaba 107 minutos. Los hiperparámetros de Optuna están en
+   `src/airbnb_rio/config.py`.
 
-La base de datos Valkey es usada por Apache Airflow para su funcionamiento. Tal como está configurado ahora no esta expuesto el puerto para poder ser usado externamente. Se puede modificar el archivo `docker-compose.yaml` para habilitaro.
+## Estado
 
-## Pull Request
+**Primera entrega**
+- [x] Servicios de base en Docker Compose
+- [x] Paquete `src/airbnb_rio` con la limpieza, las features y el pipeline del TP de AMq1
+- [x] DAG `etl_listings`: CSV crudo → parquet de train/test en MinIO
+- [x] DAG `train_model`: entrenamiento, registro en MLflow y champion/challenger
 
-Este repositorio está abierto para que realicen sus propios Pull Requests y así contribuir a mejorarlo. Si desean realizar alguna modificación, **¡son bienvenidos!** También se pueden crear nuevos entornos productivos para aumentar la variedad de implementaciones, idealmente en diferentes `branches`. Algunas ideas que se me ocurren que podrían implementar son:
+**Entrega final**
+- [ ] Experimento de búsqueda de hiperparámetros en MLflow (Optuna, un run anidado por trial)
+- [ ] API: `POST /predict` que devuelve BRL, cargando el `champion` del registry
+- [ ] Log de predicciones en PostgreSQL
+- [ ] Documentación de la API (`/docs`) acorde al modelo
 
-- Reemplazar Airflow y MLflow con [Metaflow](https://metaflow.org/) o [Kubeflow](https://www.kubeflow.org).
-- Reemplazar MLflow con [Seldon-Core](https://github.com/SeldonIO/seldon-core).
-- Agregar un servicio de tableros como, por ejemplo, [Grafana](https://grafana.com).
+## Más sobre el entorno
+
+Detalles de la infraestructura base (variables de Airflow, conexiones, CLI, acceso a
+los buckets desde afuera de Docker) en el
+[README original de la cátedra](https://github.com/facundolucianna/amq2-service-ml#readme).
