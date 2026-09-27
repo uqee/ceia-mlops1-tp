@@ -20,12 +20,19 @@ def _cliente():
 
 
 def existe(key: str, bucket: str = BUCKET) -> bool:
-    """True si el objeto ya está en el bucket."""
+    """True si el objeto ya está en el bucket.
+
+    Sólo un 404 significa "no existe". Cualquier otro error (credenciales,
+    permisos, MinIO caído) se propaga, para que la task falle con la causa real
+    en vez de intentar descargar de nuevo.
+    """
     try:
         _cliente().head_object(Bucket=bucket, Key=key)
         return True
-    except ClientError:
-        return False
+    except ClientError as error:
+        if error.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
 
 
 def subir_archivo(ruta_local: str, key: str, bucket: str = BUCKET) -> str:

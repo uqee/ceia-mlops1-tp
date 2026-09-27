@@ -29,6 +29,10 @@ DATASET_TRAIN = Asset("s3://data/final/train.parquet")
     schedule=[DATASET_TRAIN],
     start_date=pendulum.datetime(2026, 9, 1, tz="UTC"),
     catchup=False,
+    # Un run a la vez: `promover` lee el champion, compara y reasigna el alias.
+    # Dos runs en paralelo podrían leer el mismo champion y el último en
+    # terminar pisaría al mejor.
+    max_active_runs=1,
     doc_md=__doc__,
     tags=["airbnb", "train"],
 )
@@ -64,8 +68,9 @@ def train_model():
                 name="model",
                 registered_model_name=NOMBRE_MODELO,
                 input_example=X.head(3),
-                # MLflow 3 guarda los modelos de sklearn con skops (más seguro
-                # que pickle) y sólo acepta tipos declarados como confiables.
+                # skops en vez de pickle: al cargar no ejecuta código arbitrario,
+                # sólo reconstruye los tipos declarados como confiables.
+                serialization_format="skops",
                 skops_trusted_types=[
                     "numpy.dtype",
                     "xgboost.core.Booster",
