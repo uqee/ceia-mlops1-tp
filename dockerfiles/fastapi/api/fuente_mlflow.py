@@ -56,20 +56,21 @@ class FuenteMlflow:
         try:
             if self._cliente is None:
                 self._cliente = MlflowClient()
-            version = self._cliente.get_model_version_by_alias(self._nombre, self._alias)
-            if self._cargado is not None and self._cargado.version == version.version:
+            info = self._cliente.get_model_version_by_alias(self._nombre, self._alias)
+            version = str(info.version)  # según el backend de MLflow viene int o str
+            if self._cargado is not None and self._cargado.version == version:
                 return
 
-            modelo = self._cargar(f"models:/{self._nombre}/{version.version}")
-            test_mae = version.tags.get("test_mae")
+            modelo = self._cargar(f"models:/{self._nombre}/{version}")
+            test_mae = info.tags.get("test_mae")
             self._cargado = ModeloCargado(
                 modelo=modelo,
                 nombre=self._nombre,
                 alias=self._alias,
-                version=version.version,
+                version=version,
                 test_mae=float(test_mae) if test_mae is not None else None,
             )
-            log.info("Sirviendo %s v%s (%s)", self._nombre, version.version, self._alias)
+            log.info("Sirviendo %s v%s (%s)", self._nombre, version, self._alias)
         except Exception as error:
             actual = f"v{self._cargado.version}" if self._cargado else "ninguno"
             log.warning("No se pudo actualizar el modelo (sigue %s): %s", actual, error)
