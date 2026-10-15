@@ -115,8 +115,16 @@ XGB_FIJOS = {
     "tree_method": "hist",
 }
 
+# --- Búsqueda de hiperparámetros ---
+# CV 3-fold como en la sección 9.3 del TP: 3 en vez de 5 para que cada trial sea
+# más rápido.
+CV_FOLDS = 3
+
 # --- MLflow ---
 EXPERIMENTO_MLFLOW = "airbnb_rio_price"
+EXPERIMENTO_BUSQUEDA = "airbnb_rio_price_optuna"
 NOMBRE_MODELO = "airbnb_rio_price"
 ALIAS_CHAMPION = "champion"
 ALIAS_CHALLENGER = "challenger"
+# Artefacto del run padre de cada búsqueda con los hiperparámetros ganadores.
+ARCHIVO_MEJORES_PARAMS = "mejores_params.json"
