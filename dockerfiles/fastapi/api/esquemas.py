@@ -50,7 +50,11 @@ Puntaje = Field(default=None, ge=0, le=5)
 class AvisoEntrada(BaseModel):
     """Un aviso de Airbnb en Río de Janeiro, tal como lo publica Inside Airbnb."""
 
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [EJEMPLO_AVISO]})
+    # allow_inf_nan=False: sin esto, un `Infinity` en un campo sin tope (bedrooms,
+    # reviews_per_month...) pasaría la validación y llegaría al modelo.
+    model_config = ConfigDict(
+        extra="forbid", allow_inf_nan=False, json_schema_extra={"examples": [EJEMPLO_AVISO]},
+    )
 
     # Ubicación
     latitude: float = Field(ge=-23.2, le=-22.6, description="Latitud (municipio de Río).")

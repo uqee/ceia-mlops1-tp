@@ -4,7 +4,11 @@ Los endpoints son `def` (no `async`): predecir es CPU y el log en PostgreSQL es
 bloqueante, así que FastAPI los corre en su pool de threads.
 """
 
+import math
+
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from api.esquemas import AvisoEntrada, ModeloInfo, PrediccionSalida
@@ -33,6 +37,13 @@ def crear_app(servicio: ServicioPrediccion, lifespan=None) -> FastAPI:
         version="1.0.0",
         lifespan=lifespan,
     )
+
+    @app.exception_handler(RequestValidationError)
+    def aviso_invalido(request: Request, error: RequestValidationError) -> JSONResponse:
+        # El 422 por defecto repite el valor recibido. Si es NaN o Infinity (JSON no
+        # estándar, pero el parser lo acepta) no se puede serializar y sale un 500.
+        detalle = jsonable_encoder(error.errors(), custom_encoder={float: _float_json})
+        return JSONResponse(status_code=422, content={"detail": detalle})
 
     @app.exception_handler(ModeloNoDisponible)
     def sin_modelo(request: Request, error: ModeloNoDisponible) -> JSONResponse:
@@ -69,3 +80,7 @@ def crear_app(servicio: ServicioPrediccion, lifespan=None) -> FastAPI:
         )
 
     return app
+
+
+def _float_json(valor: float) -> float | str:
+    return valor if math.isfinite(valor) else str(valor)

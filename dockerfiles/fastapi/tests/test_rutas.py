@@ -1,4 +1,7 @@
+import json
 import math
+
+import pytest
 
 from airbnb_rio.config import FEATURES
 from airbnb_rio.features import COLUMNAS_CRUDAS
@@ -101,3 +104,15 @@ def test_predict_responde_aunque_falle_el_registro(modelo):
 
     assert respuesta.status_code == 200
     assert respuesta.json()["precio_brl"] == 300.0
+
+
+@pytest.mark.parametrize("valor", [float("nan"), float("inf"), float("-inf")])
+def test_predict_rechaza_numeros_no_finitos_con_422(cliente, valor):
+    # json.dumps los escribe como NaN / Infinity, que no es JSON estándar.
+    cuerpo = json.dumps({**EJEMPLO_AVISO, "bedrooms": valor})
+    respuesta = cliente.post(
+        "/predict", content=cuerpo, headers={"Content-Type": "application/json"},
+    )
+
+    assert respuesta.status_code == 422
+    assert respuesta.json()["detail"][0]["loc"] == ["body", "bedrooms"]
