@@ -9,5 +9,6 @@ Módulos:
     features  -- limpieza del CSV crudo y construcción de features (secc. 2-3 del TP de AMq1).
     modelo    -- preprocesador, pipeline completo y métricas.
     busqueda  -- espacio de búsqueda de Optuna y MAE por validación cruzada.
+    hiperparametros -- qué hiperparámetros usa train_model (búsqueda o config).
     s3        -- lectura y escritura en el data lake (MinIO).
 """

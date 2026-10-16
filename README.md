@@ -88,14 +88,17 @@ flowchart LR
 
 1. `entrenar`: ajusta el pipeline con los mejores hiperparámetros disponibles y lo registra
    como nueva versión de `airbnb_rio_price`. Usa los de la búsqueda de `tune_hyperparams`
-   con mejor MAE de CV y, si todavía no se corrió ninguna, los de AMq1 (`config.XGB_PARAMS`).
+   con mejor MAE de CV **hecha sobre el mismo train** y, si no hay ninguna, los de AMq1
+   (`config.XGB_PARAMS`). Una búsqueda sobre otro train no cuenta: su MAE de CV no es
+   comparable (cada búsqueda guarda la huella del train que usó en el tag `datos_train`).
    El run guarda de dónde salieron en el tag `origen_params` (`config` u `optuna:<run_id>`).
 2. `evaluar`: calcula MAE, RMSE, MAPE y R² en test (en BRL) y los guarda en el run.
 3. `promover`: si la versión nueva tiene mejor MAE que el `champion`, pasa a ser el
    `champion`. Si no, queda como `challenger` y producción no cambia.
 
 `train_model` no tiene horario: está atado a dos Assets. Arranca solo cuando el ETL
-escribe `s3://data/final/train.parquet` o cuando `tune_hyperparams` termina una búsqueda.
+escribe `s3://data/final/train.parquet` o cuando `tune_hyperparams` encuentra mejores
+hiperparámetros.
 
 ### DAG `tune_hyperparams` (manual)
 
@@ -113,14 +116,19 @@ queda reservado para la comparación champion/challenger.
   termina peor que la base.
 - A diferencia del notebook, el MAE de CV se mide en BRL, no sobre `log(precio)`: es la misma
   métrica con la que después se decide el champion.
-- Al terminar actualiza el Asset `airbnb_rio_mejores_params` y dispara `train_model`. El modelo
-  nuevo sólo llega a producción si además mejora el MAE en test.
+- `buscar -> hay_mejora -> publicar`. Si la búsqueda cambia los hiperparámetros que usaría
+  `train_model` (mejor MAE de CV que la mejor búsqueda anterior sobre el mismo train, y no ganó
+  el trial de la base), `publicar` actualiza el Asset `airbnb_rio_mejores_params` y dispara
+  `train_model`. Si no, `hay_mejora` corta el DAG y `publicar` queda *skipped*: no se registra
+  una versión nueva idéntica a la que ya hay. El run padre lo deja en el tag `mejora`.
+- El modelo nuevo sólo llega a producción si además mejora el MAE en test.
 
 ## API
 
 FastAPI sirve la versión `champion` de `airbnb_rio_price`. Cada 60 s se fija si el alias
-apunta a otra versión y, si cambió, la carga sola, sin reiniciar el contenedor. Documentación
-interactiva en http://localhost:8800/docs.
+apunta a otra versión y, si cambió, la carga sola, sin reiniciar el contenedor. Esa consulta
+corre en segundo plano: si MLflow está caído o colgado, la API sigue respondiendo con el modelo
+que tiene. Documentación interactiva en http://localhost:8800/docs.
 
 | Endpoint | Qué devuelve |
 | --- | --- |
@@ -130,7 +138,7 @@ interactiva en http://localhost:8800/docs.
 
 `/modelo` y `/predict` responden **503** mientras no haya champion (antes del primer
 `train_model`). Un aviso mal formado (campo faltante, `room_type` desconocido, puntaje fuera de
-0-5, campo de más) responde **422**.
+0-5, campo de más, `NaN` o `Infinity`) responde **422**.
 
 El aviso se manda con las **columnas crudas de Inside Airbnb**, con los mismos nombres que el CSV.
 La API no calcula features por su cuenta: llama a `airbnb_rio.features.construir_features`, el
@@ -190,6 +198,7 @@ docker compose exec fastapi sh -c "pip install -q -r requirements-dev.txt && pyt
 │   ├── features.py           # limpieza y features (secciones 2-3 del TP de AMq1)
 │   ├── modelo.py             # preprocesador + XGBoost + métricas
 │   ├── busqueda.py           # espacio de Optuna y MAE por CV (sección 9.3)
+│   ├── hiperparametros.py    # qué hiperparámetros usa train_model (búsqueda o config)
 │   └── s3.py                 # lectura/escritura en MinIO
 ├── dockerfiles/
 │   ├── fastapi/
@@ -238,7 +247,7 @@ Esperar a que `docker ps` muestre todo `healthy` (unos minutos la primera vez).
 5. Probar la API en http://localhost:8800/docs (o con el `curl` de la sección [API](#api)).
    Toma el champion nuevo en menos de un minuto.
 6. Opcional: activar `tune_hyperparams` y dispararlo con ▶ → *Trigger with config* para elegir
-   `n_trials`. Al terminar, `train_model` arranca solo con los mejores hiperparámetros.
+   `n_trials`. Si encuentra mejores hiperparámetros, `train_model` arranca solo con ellos.
 
 Si Inside Airbnb no está accesible, se puede subir el CSV a mano antes del paso 3
 (`obtener_raw` lo detecta y no descarga):

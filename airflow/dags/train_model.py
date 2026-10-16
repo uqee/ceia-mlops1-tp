@@ -5,8 +5,9 @@ Entrena XGBoost con los mejores hiperparámetros disponibles, lo registra en
 MLflow y decide si reemplaza al modelo en producción.
 
 Los hiperparámetros salen de la búsqueda de `tune_hyperparams` con mejor MAE de
-CV (experimento `airbnb_rio_price_optuna`). Si todavía no se corrió ninguna, se
-usan los que encontró Optuna en el TP de AMq1 (`config.XGB_PARAMS`).
+CV hecha sobre el mismo train (experimento `airbnb_rio_price_optuna`). Si todavía
+no se corrió ninguna, se usan los que encontró Optuna en el TP de AMq1
+(`config.XGB_PARAMS`). Ver `airbnb_rio.hiperparametros`.
 
 ```
 entrenar -> evaluar -> promover
@@ -49,39 +50,22 @@ def train_model():
         """Ajusta el modelo sobre train y lo registra en MLflow."""
         import mlflow
 
-        from airbnb_rio import s3
+        from airbnb_rio import hiperparametros, s3
         from airbnb_rio.config import (
-            ARCHIVO_MEJORES_PARAMS,
-            EXPERIMENTO_BUSQUEDA,
             EXPERIMENTO_MLFLOW,
             FEATURES,
             KEY_TRAIN,
             NOMBRE_MODELO,
             TARGET,
-            XGB_PARAMS,
         )
         from airbnb_rio.modelo import construir_modelo
 
-        # La búsqueda terminada con mejor MAE de CV. search_runs devuelve un
-        # DataFrame vacío si el experimento todavía no existe.
-        busquedas = mlflow.search_runs(
-            experiment_names=[EXPERIMENTO_BUSQUEDA],
-            filter_string="tags.tipo = 'busqueda' and attributes.status = 'FINISHED'",
-            order_by=["metrics.mejor_cv_mae ASC"],
-            max_results=1,
-        )
-        if busquedas.empty:
-            params, origen = XGB_PARAMS, "config"
-        else:
-            run_busqueda = busquedas.iloc[0]["run_id"]
-            params = mlflow.artifacts.load_dict(
-                f"runs:/{run_busqueda}/{ARCHIVO_MEJORES_PARAMS}"
-            )
-            origen = f"optuna:{run_busqueda}"
-        print(f"Hiperparámetros ({origen}): {params}")
-
         train = s3.leer_parquet(KEY_TRAIN)
         X, y = train[FEATURES], train[TARGET]
+
+        elegidos = hiperparametros.vigentes(hiperparametros.huella(train))
+        params, origen = elegidos.params, elegidos.origen
+        print(f"Hiperparámetros ({origen}): {params}")
 
         mlflow.set_experiment(EXPERIMENTO_MLFLOW)
         with mlflow.start_run(run_name="xgboost") as run:
