@@ -7,3 +7,4 @@ FROM postgres:13
 # and source any *.sh scripts found in that directory to do further initialization before starting the service.
 
 COPY mlflow.sql /docker-entrypoint-initdb.d/
+COPY api.sql /docker-entrypoint-initdb.d/

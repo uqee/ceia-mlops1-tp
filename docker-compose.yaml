@@ -200,7 +200,7 @@ services:
     depends_on:
       mlflow:
         condition: service_healthy
-      airflow-apiserver:
+      postgres:
         condition: service_healthy
     ports:
       - "${FASTAPI_PORT:-8800}:8800"
@@ -212,6 +212,16 @@ services:
       - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minio123}
       - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
       - AWS_ENDPOINT_URL_S3=http://s3:9000
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      # Si MLflow no responde, la API sigue con el modelo que tiene: que no se
+      # quede minutos reintentando (por defecto son 7 reintentos con backoff).
+      - MLFLOW_HTTP_REQUEST_MAX_RETRIES=1
+      - MLFLOW_HTTP_REQUEST_TIMEOUT=10
+      - PREDICCIONES_DB_URL=postgresql://${PG_USER:-airflow}:${PG_PASSWORD:-airflow}@postgres:5432/api_db
+      # Paquete compartido del TP (src/airbnb_rio): mismas features que el entrenamiento
+      - PYTHONPATH=/opt/src
+    volumes:
+      - ./src:/opt/src:ro
     command: >
       uvicorn app:app 
       --host 0.0.0.0

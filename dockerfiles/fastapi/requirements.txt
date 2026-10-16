@@ -1,2 +1,20 @@
 fastapi>=0.116
 uvicorn>=0.27
+# El modelo serializado se abre con las mismas versiones con que lo entrenó
+# Airflow (dockerfiles/airflow/requirements.txt). skops es la que trae ahí
+# mlflow[extras].
+mlflow==3.16.1
+scikit-learn==1.9.0
+xgboost==3.3.0
+skops==0.16.0
+# numpy, pandas y scipy no las fija dockerfiles/airflow/requirements.txt: salen de
+# las constraints de apache/airflow:3.0.2. Hay que fijarlas igual acá: con numpy 2
+# skops no abre un modelo guardado con numpy 1.26 (np.log/np.exp quedan como
+# tipos no confiables) y la API respondería 503 para siempre. scipy va porque la
+# última exige numpy 2.
+numpy==1.26.4
+pandas==2.1.4
+scipy==1.15.3
+boto3
+# Log de predicciones
+psycopg[binary]

@@ -1,8 +1,13 @@
 """
 ### Entrenamiento del modelo de precio
 
-Entrena XGBoost con los hiperparámetros que encontró Optuna en el TP de AMq1, lo
-registra en MLflow y decide si reemplaza al modelo en producción.
+Entrena XGBoost con los mejores hiperparámetros disponibles, lo registra en
+MLflow y decide si reemplaza al modelo en producción.
+
+Los hiperparámetros salen de la búsqueda de `tune_hyperparams` con mejor MAE de
+CV hecha sobre el mismo train (experimento `airbnb_rio_price_optuna`). Si todavía
+no se corrió ninguna, se usan los que encontró Optuna en el TP de AMq1
+(`config.XGB_PARAMS`). Ver `airbnb_rio.hiperparametros`.
 
 ```
 entrenar -> evaluar -> promover
@@ -15,18 +20,20 @@ entrenar -> evaluar -> promover
   champion), la versión nueva pasa a ser `champion`. Si no, queda como
   `challenger` y el champion no se toca.
 
-Corre solo cada vez que `etl_listings` actualiza `s3://data/final/train.parquet`.
+Corre solo cada vez que `etl_listings` actualiza `s3://data/final/train.parquet`
+o `tune_hyperparams` termina una búsqueda (Asset `airbnb_rio_mejores_params`).
 """
 
 import pendulum
 from airflow.sdk import Asset, dag, task
 
 DATASET_TRAIN = Asset("s3://data/final/train.parquet")
+ASSET_PARAMS = Asset("airbnb_rio_mejores_params")
 
 
 @dag(
     dag_id="train_model",
-    schedule=[DATASET_TRAIN],
+    schedule=(DATASET_TRAIN | ASSET_PARAMS),
     start_date=pendulum.datetime(2026, 9, 1, tz="UTC"),
     catchup=False,
     # Un run a la vez: `promover` lee el champion, compara y reasigna el alias.
@@ -43,25 +50,29 @@ def train_model():
         """Ajusta el modelo sobre train y lo registra en MLflow."""
         import mlflow
 
-        from airbnb_rio import s3
+        from airbnb_rio import hiperparametros, s3
         from airbnb_rio.config import (
             EXPERIMENTO_MLFLOW,
             FEATURES,
             KEY_TRAIN,
             NOMBRE_MODELO,
             TARGET,
-            XGB_PARAMS,
         )
         from airbnb_rio.modelo import construir_modelo
 
         train = s3.leer_parquet(KEY_TRAIN)
         X, y = train[FEATURES], train[TARGET]
 
-        mlflow.set_experiment(EXPERIMENTO_MLFLOW)
-        with mlflow.start_run(run_name="xgboost_optuna_amq1") as run:
-            modelo = construir_modelo().fit(X, y)
+        elegidos = hiperparametros.vigentes(hiperparametros.huella(train))
+        params, origen = elegidos.params, elegidos.origen
+        print(f"Hiperparámetros ({origen}): {params}")
 
-            mlflow.log_params(XGB_PARAMS)
+        mlflow.set_experiment(EXPERIMENTO_MLFLOW)
+        with mlflow.start_run(run_name="xgboost") as run:
+            modelo = construir_modelo(params).fit(X, y)
+
+            mlflow.set_tag("origen_params", origen)
+            mlflow.log_params(params)
             mlflow.log_params({"n_train": len(X), "target": "log(precio)"})
             info = mlflow.sklearn.log_model(
                 modelo,

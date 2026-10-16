@@ -62,11 +62,14 @@ def construir_features(df: pd.DataFrame) -> pd.DataFrame:
     split sin fuga. Lo que sí se ajusta con datos (imputación, escalado,
     agrupación de categorías raras) vive dentro del pipeline, en `modelo.py`.
 
+    También la usa la API para un aviso nuevo, que no trae precio: por eso
+    `precio` sólo se devuelve si viene en la entrada.
+
     Args:
-        df: salida de `limpiar`.
+        df: salida de `limpiar`, o avisos con las mismas COLUMNAS_CRUDAS.
 
     Returns:
-        DataFrame con FEATURES más `precio`.
+        DataFrame con FEATURES, más `precio` si estaba en `df`.
     """
     df = df.copy()
 
@@ -97,4 +100,4 @@ def construir_features(df: pd.DataFrame) -> pd.DataFrame:
             lambda ls, k=clave: any(k in a.lower() for a in ls)
         ).astype(int)
 
-    return df[[*FEATURES, TARGET]]
+    return df[[*FEATURES, TARGET]] if TARGET in df else df[FEATURES]
