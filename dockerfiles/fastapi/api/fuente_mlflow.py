@@ -4,6 +4,10 @@ Sirve la versión que tiene el alias (`champion`) y cada `ttl_segundos` vuelve a
 preguntar a qué versión apunta. Si `train_model` promovió una nueva, la carga
 sola, sin reiniciar el contenedor. Si MLflow no responde, sigue sirviendo la que
 ya tenía cargada.
+
+Con un modelo ya cargado, la consulta a MLflow corre en segundo plano: ningún
+request espera a MLflow, aunque esté colgado. Sólo se espera mientras no hay
+ningún modelo, porque sin modelo no hay nada que servir.
 """
 
 import logging
@@ -18,6 +22,10 @@ from api.servicio import ModeloCargado, ModeloNoDisponible
 log = logging.getLogger(__name__)
 
 
+def _en_thread(funcion) -> None:
+    threading.Thread(target=funcion, daemon=True).start()
+
+
 class FuenteMlflow:
     def __init__(
         self,
@@ -27,6 +35,7 @@ class FuenteMlflow:
         cliente=None,
         cargar=mlflow.sklearn.load_model,
         reloj=time.monotonic,
+        en_segundo_plano=_en_thread,
     ):
         # Nada de I/O acá: el cliente se crea recién en la primera consulta.
         self._nombre = nombre
@@ -35,21 +44,40 @@ class FuenteMlflow:
         self._cliente = cliente
         self._cargar = cargar
         self._reloj = reloj
+        self._en_segundo_plano = en_segundo_plano
         self._cargado: ModeloCargado | None = None
         self._ultimo_chequeo = float("-inf")
-        # FastAPI atiende requests en paralelo: una sola recarga a la vez.
+        # FastAPI atiende requests en paralelo: una sola consulta a MLflow a la vez.
         self._lock = threading.Lock()
 
     def obtener(self) -> ModeloCargado:
-        with self._lock:
-            if self._reloj() - self._ultimo_chequeo >= self._ttl:
-                self._ultimo_chequeo = self._reloj()
-                self._actualizar()
-            if self._cargado is None:
-                raise ModeloNoDisponible(
-                    f"No hay modelo con alias '{self._alias}' en '{self._nombre}' todavía"
-                )
+        if self._cargado is not None:
+            # Si otra consulta ya está en curso, no se lanza una segunda.
+            if self._vencido() and self._lock.acquire(blocking=False):
+                self._en_segundo_plano(self._chequear_y_liberar)
             return self._cargado
+
+        with self._lock:
+            if self._cargado is None and self._vencido():
+                self._chequear()
+        if self._cargado is None:
+            raise ModeloNoDisponible(
+                f"No hay modelo con alias '{self._alias}' en '{self._nombre}' todavía"
+            )
+        return self._cargado
+
+    def _vencido(self) -> bool:
+        return self._reloj() - self._ultimo_chequeo >= self._ttl
+
+    def _chequear_y_liberar(self) -> None:
+        try:
+            self._chequear()
+        finally:
+            self._lock.release()
+
+    def _chequear(self) -> None:
+        self._ultimo_chequeo = self._reloj()
+        self._actualizar()
 
     def _actualizar(self) -> None:
         """Carga la versión del alias si cambió. Ante cualquier error, deja la que había."""
