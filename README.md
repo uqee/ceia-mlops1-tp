@@ -10,7 +10,10 @@ orquesta, MLflow registra experimentos y modelos, MinIO hace de data lake S3,
 PostgreSQL guarda metadatos y FastAPI sirve el modelo. Todo corre con Docker Compose,
 sobre la base de [amq2-service-ml](https://github.com/facundolucianna/amq2-service-ml).
 
-**Integrantes:** _completar_
+**Integrantes:**
+- Matias Coulougian
+- Denis Zhbankov
+- Lautaro Vera
 
 ## El modelo
 
@@ -21,12 +24,12 @@ sobre la base de [amq2-service-ml](https://github.com/facundolucianna/amq2-servi
 - **Modelo:** XGBoost. Arranca con los hiperparámetros que encontró Optuna en el TP de
   AMq1, y el DAG `tune_hyperparams` puede buscar otros mejores.
 
-| Métrica (test) | Valor |
-| --- | --- |
-| MAE | 249,6 BRL |
-| RMSE | 613,2 BRL |
-| MAPE | 31,4 % |
-| R² | 0,545 |
+| Métrica (test) | Valor     |
+| -------------- | --------- |
+| MAE            | 249,6 BRL |
+| RMSE           | 613,2 BRL |
+| MAPE           | 31,4 %    |
+| R²             | 0,545     |
 
 El análisis completo y la comparación contra los otros 15 modelos están en el
 [notebook del TP de AMq1](https://github.com/lautarovera-edu/fiuba-ceia-amq/tree/tp-full-run/trabajo_final).
@@ -52,13 +55,13 @@ flowchart LR
   API --> PG[(PostgreSQL<br/>api_db.predicciones)]
 ```
 
-| Servicio | Rol en el TP | URL local |
-| --- | --- | --- |
-| Airflow | Corre los DAGs de ETL y entrenamiento | http://localhost:8080 (airflow / airflow) |
-| MinIO | Data lake: CSV crudo, parquet intermedios, train/test, artefactos de MLflow | http://localhost:9001 (minio / minio123) |
-| MLflow | Runs con parámetros y métricas, Model Registry con alias `champion` | http://localhost:5001 |
-| PostgreSQL | Metadatos de Airflow y MLflow, log de predicciones (`api_db`) | `localhost:5432` |
-| FastAPI | Sirve el modelo `champion` y registra cada predicción | http://localhost:8800/docs |
+| Servicio   | Rol en el TP                                                                | URL local                                 |
+| ---------- | --------------------------------------------------------------------------- | ----------------------------------------- |
+| Airflow    | Corre los DAGs de ETL y entrenamiento                                       | http://localhost:8080 (airflow / airflow) |
+| MinIO      | Data lake: CSV crudo, parquet intermedios, train/test, artefactos de MLflow | http://localhost:9001 (minio / minio123)  |
+| MLflow     | Runs con parámetros y métricas, Model Registry con alias `champion`         | http://localhost:5001                     |
+| PostgreSQL | Metadatos de Airflow y MLflow, log de predicciones (`api_db`)               | `localhost:5432`                          |
+| FastAPI    | Sirve el modelo `champion` y registra cada predicción                       | http://localhost:8800/docs                |
 
 ### DAG `etl_listings` (semanal)
 
@@ -67,12 +70,12 @@ flowchart LR
   A[obtener_raw] --> B[limpiar] --> C[construir_features] --> D[separar_train_test]
 ```
 
-| Task | Qué hace | Escribe |
-| --- | --- | --- |
-| `obtener_raw` | Baja el snapshot de Inside Airbnb, sólo si todavía no está | `s3://data/raw/listings.csv.gz` |
-| `limpiar` | Saca columnas con fuga, parsea el precio y corta precios > 10.000 BRL | `s3://data/interim/listings_limpio.parquet` |
-| `construir_features` | Banderas de faltantes, amenities, antigüedad del host | `s3://data/interim/listings_features.parquet` |
-| `separar_train_test` | Split 70/30, semilla 42 | `s3://data/final/train.parquet`, `test.parquet` |
+| Task                 | Qué hace                                                              | Escribe                                         |
+| -------------------- | --------------------------------------------------------------------- | ----------------------------------------------- |
+| `obtener_raw`        | Baja el snapshot de Inside Airbnb, sólo si todavía no está            | `s3://data/raw/listings.csv.gz`                 |
+| `limpiar`            | Saca columnas con fuga, parsea el precio y corta precios > 10.000 BRL | `s3://data/interim/listings_limpio.parquet`     |
+| `construir_features` | Banderas de faltantes, amenities, antigüedad del host                 | `s3://data/interim/listings_features.parquet`   |
+| `separar_train_test` | Split 70/30, semilla 42                                               | `s3://data/final/train.parquet`, `test.parquet` |
 
 Cada task lee y escribe en MinIO, así que ninguna depende de lo que quedó en memoria
 de otra y cualquiera se puede reintentar sola.
@@ -130,11 +133,11 @@ apunta a otra versión y, si cambió, la carga sola, sin reiniciar el contenedor
 corre en segundo plano: si MLflow está caído o colgado, la API sigue respondiendo con el modelo
 que tiene. Documentación interactiva en http://localhost:8800/docs.
 
-| Endpoint | Qué devuelve |
-| --- | --- |
-| `GET /` | `{"estado": "ok"}` (healthcheck) |
-| `GET /modelo` | Nombre, alias, versión y MAE en test del modelo en producción |
-| `POST /predict` | `{"precio_brl", "version_modelo"}` para un aviso |
+| Endpoint        | Qué devuelve                                                  |
+| --------------- | ------------------------------------------------------------- |
+| `GET /`         | `{"estado": "ok"}` (healthcheck)                              |
+| `GET /modelo`   | Nombre, alias, versión y MAE en test del modelo en producción |
+| `POST /predict` | `{"precio_brl", "version_modelo"}` para un aviso              |
 
 `/modelo` y `/predict` responden **503** mientras no haya champion (antes del primer
 `train_model`). Un aviso mal formado (campo faltante, `room_type` desconocido, puntaje fuera de
